@@ -1,0 +1,55 @@
+[package]
+name = "web-rwkv"
+version = "0.4.1"
+edition = "2021"
+authors = ["Zhenyuan Zhang <cryscan@umich.edu>"]
+license = "MIT OR Apache-2.0"
+description = "An implementation of the RWKV language model in pure WebGPU."
+homepage = "https://github.com/cryscan/web-rwkv"
+repository = "https://github.com/cryscan/web-rwkv"
+keywords = ["deep-learning", "language", "model", "rwkv"]
+categories = ["science", "text-processing"]
+exclude = ["assets/", "crates/", "screenshots/"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[workspace]
+members = ["crates/*"]
+
+[dependencies]
+anyhow = "1.0.75"
+async-trait = "0.1.74"
+bytemuck = { version = "1.14.0", features = ["extern_crate_alloc"] }
+derive-getters = "0.3.0"
+flume = "0.11.0"
+half = { version = "2.3.1", features = ["bytemuck"] }
+lazy_static = "1.4.0"
+log = "0.4.20"
+regex = "1.10.2"
+rust_tokenizers = "8.1.1"
+safetensors = "0.4.1"
+serde = { version = "1.0.193", features = ["derive"] }
+serde_json = "1.0.108"
+uid = "0.1.7"
+web-rwkv-derive = { version = "0.2.0", path = "crates/web-rwkv-derive" }
+wgpu = "0.18.0"
+
+[dev-dependencies]
+clap = { version = "4.4.11", features = ["derive"] }
+itertools = "0.12.0"
+fastrand = "2.0.1"
+memmap2 = "0.9.1"
+pollster = "0.3.0"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+console_error_panic_hook = "0.1.7"
+console_log = "1.0.0"
+fastrand = { version = "2.0.1", features = ['js'] }
+itertools = "0.12.0"
+log = "0.4.20"
+wasm-bindgen = "0.2.89"
+wasm-bindgen-futures = "0.4.39"
+web-sys = { version = "0.3.64", features = ["File"] }
+
+[profile.release]
+lto = false
