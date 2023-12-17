@@ -381,6 +381,12 @@ impl<'a> ContextBuilder<'a> {
                 None,
             )
             .with_pipeline(
+                "argmax",
+                include_str!("shaders/argmax.wgsl"),
+                "argmax",
+                None,
+            )
+            .with_pipeline(
                 "compute",
                 include_str!("shaders/compute.wgsl"),
                 "compute",

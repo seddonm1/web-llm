@@ -132,6 +132,37 @@ impl<'a> TensorOp<'a> {
         })
     }
 
+    /// Argmax operator applied on `x` returning `y`.
+    pub fn argmax(x: TensorView<'a, f32>, y: TensorView<'a, u32>) -> Result<Self, TensorError> {
+        let shape = x.shape();
+        let context = &x.tensor.context;
+        let pipeline = context.pipeline("argmax")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: x.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: x.binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: y.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [1, shape[1] as u32, shape[2] as u32],
+        })
+    }
+
     /// Layer normalization applied on `x`, with weight `w` and bias `b`.
     /// - `x` shape: `[C, T, B]`.
     /// - `w` shape: `[C, 1, 1]`.
@@ -2330,6 +2361,58 @@ mod tests {
             output_host,
             vec![0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0]
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_argmax() -> Result<()> {
+        let context = match create_context() {
+            Ok(context) => context,
+            Err(_) => return Ok(()),
+        };
+        fastrand::seed(42);
+
+        const C: usize = 10000;
+        const T: usize = 1;
+        const B: usize = 1;
+
+        let x = [(); C * T * B]
+            .map(|_| 10.0 * (fastrand::f32() - 0.5))
+            .to_vec();
+        let shape = Shape::new(C, T, B, 1);
+
+        let x_dev: TensorGpu<_, _> = context.tensor_from_data(shape, x.clone())?;
+        let y_dev: TensorGpu<_, _> =
+            context.tensor_from_data(Shape::new(1, 1, 1, 1), vec![0u32])?;
+
+        let y_map = context.tensor_init(y_dev.shape());
+
+        let softmax = TensorOp::argmax(x_dev.view(.., .., .., ..)?, y_dev.view(.., .., .., ..)?)?;
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        pass.execute_tensor_op(&softmax);
+        drop(pass);
+
+        encoder.copy_tensor(&y_dev, &y_map)?;
+        context.queue.submit(Some(encoder.finish()));
+
+        let y_host = y_map.back();
+        let y_host = Vec::from(y_host);
+
+        let ans = x
+            .into_iter()
+            .enumerate()
+            .max_by(|(_, value0), (_, value1)| value0.partial_cmp(value1).unwrap())
+            .map(|(idx, _)| idx as u32)
+            .unwrap();
+
+        assert_eq!(y_host.len(), 1);
+        assert_eq!(y_host[0], ans);
 
         Ok(())
     }

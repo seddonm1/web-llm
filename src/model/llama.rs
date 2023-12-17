@@ -97,6 +97,7 @@ struct Runtime {
     ffn_up: TensorGpu<f32, ReadWrite>,
 
     logits: TensorGpu<f32, ReadWrite>,
+    argmax: TensorGpu<u32, ReadWrite>,
 
     key_cache: HashMap<usize, TensorGpu<f32, ReadWrite>>,
     value_cache: HashMap<usize, TensorGpu<f32, ReadWrite>>,
@@ -111,6 +112,7 @@ impl Runtime {
         let att_shape = Shape::new(config.n_heads * config.seq_len, 1, 1, 1);
         let logits_shape = Shape::new(config.vocab_size, 1, 1, 1);
         let cache_shape = Shape::new(config.seq_len * config.dim, 1, 1, 1);
+        let argmax_shape = Shape::new(1, 1, 1, 1);
 
         Self {
             x: context.tensor_init(dim_shape),
@@ -125,6 +127,7 @@ impl Runtime {
             ffn_up: context.tensor_init(hidden_shape),
 
             logits: context.tensor_init(logits_shape),
+            argmax: context.tensor_init(argmax_shape),
 
             key_cache: (0..config.n_layers)
                 .map(|layer_index| (layer_index, context.tensor_init(cache_shape)))
@@ -320,6 +323,10 @@ impl Model {
                     buffer.x.view(.., .., .., ..)?,
                     buffer.logits.view(.., .., .., ..)?,
                 )?,
+                TensorOp::argmax(
+                    buffer.logits.view(.., .., .., ..)?,
+                    buffer.argmax.view(.., .., .., ..)?,
+                )?,
             ]
             .into_iter(),
         );
@@ -329,36 +336,12 @@ impl Model {
         pass.execute_tensor_op(&ops);
         drop(pass);
 
-        // // debug get output
-        // let probe0 = &buffer.probe0;
-        // let x_map0 = context.tensor_init(probe0.shape());
-        // encoder.copy_tensor(&probe0, &x_map0)?;
-
-        let logits_map = context.tensor_init(buffer.logits.shape());
-        encoder.copy_tensor(&buffer.logits, &logits_map)?;
+        let argmax_map = context.tensor_init(buffer.argmax.shape());
+        encoder.copy_tensor(&buffer.argmax, &argmax_map)?;
         context.queue.submit(Some(encoder.finish()));
-        let logits = Vec::from(logits_map.back());
+        let argmax = Vec::from(argmax_map.back());
 
-        // // debug get output
-        // let x_host0 = x_map0.back();
-        // let x_host_vec0 = Vec::from(x_host0);
-        // println!(
-        //     "\n{:?}\n{}",
-        //     &probe0.shape(),
-        //     &x_host_vec0[0..seq_len]
-        //         .iter()
-        //         .map(|v| format!("{:.4}", v))
-        //         .collect::<Vec<_>>()
-        //         .join(" ")
-        //         .replace('"', "")
-        // );
-
-        Ok(logits
-            .into_iter()
-            .enumerate()
-            .max_by(|(_, value0), (_, value1)| value0.partial_cmp(value1).unwrap())
-            .map(|(idx, _)| idx as i64)
-            .unwrap())
+        Ok(argmax[0] as i64)
     }
 }
 
