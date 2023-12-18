@@ -28,30 +28,42 @@ async fn create_context() -> Result<Context> {
 async fn run(args: Args) -> Result<()> {
     let context = create_context().await?;
 
-    let file = File::open(args.path)?;
+    let file = File::open(&args.path)?;
     let data = unsafe { Mmap::map(&file)? };
 
-    // // stories-15M
-    let config = ModelConfig {
-        dim: 288,
-        hidden_dim: 768,
-        n_layers: 6,
-        n_heads: 6,
-        n_kv_heads: 6,
-        vocab_size: 32000,
-        seq_len: 256,
+    let config = match args.path.to_string_lossy().to_string() {
+        // stories-15M
+        p if p.contains("15M") => ModelConfig {
+            dim: 288,
+            hidden_dim: 768,
+            n_layers: 6,
+            n_heads: 6,
+            n_kv_heads: 6,
+            vocab_size: 32000,
+            seq_len: 256,
+        },
+        // stories-42M
+        p if p.contains("42M") => ModelConfig {
+            dim: 512,
+            hidden_dim: 1376,
+            n_layers: 8,
+            n_heads: 8,
+            n_kv_heads: 8,
+            vocab_size: 32000,
+            seq_len: 1024,
+        },
+        // stories-110M
+        p if p.contains("110M") => ModelConfig {
+            dim: 768,
+            hidden_dim: 2048,
+            n_layers: 12,
+            n_heads: 12,
+            n_kv_heads: 12,
+            vocab_size: 32000,
+            seq_len: 1024,
+        },
+        _ => unimplemented!(),
     };
-
-    // stories-110M
-    // let config = ModelConfig {
-    //     dim: 768,
-    //     hidden_dim: 2048,
-    //     n_layers: 12,
-    //     n_heads: 12,
-    //     n_kv_heads: 12,
-    //     vocab_size: 32000,
-    //     seq_len: 1024,
-    // };
 
     let tokenizer = LlamaTokenizer::new("tokenizer.model").unwrap();
     let model = ModelBuilder::new(&context, &config, &data).build::<llama::Model>()?;

@@ -8,7 +8,8 @@ from safetensors.torch import load_file, save_file
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--input", type=str, help="Path to input pth model")
+parser.add_argument("--input", type=str, help="Path to input pytorch_model.bin")
+parser.add_argument("--config", type=str, help="Path to input config.json")
 parser.add_argument("--output", type=str, help="Path to output safetensors model")
 args = parser.parse_args()
 
@@ -20,21 +21,24 @@ def rename_key(rename, name):
     return name
 
 
-def convert_file(pt_filename: str, sf_filename: str, transpose_names=[]):
+def convert_file(pt_filename: str, config_filename: str, sf_filename: str, transpose_names=[]):
     loaded = torch.load(pt_filename, map_location="cpu")
     if "state_dict" in loaded:
         loaded = loaded["state_dict"]
 
     # huggingface permutes WQ and WK, this function reverses it
-    def permute_reverse(w, n_heads=16, dim1=2048, dim2=2048):
+    def permute_reverse(w, n_heads, dim1, dim2):
         return w.view(n_heads, 2, dim1 // n_heads // 2, dim2).transpose(1, 2).reshape(dim1, dim2)
+
+    with open(config_filename) as config:
+        config = json.load(config)
 
     # For tensors to be contiguous
     for k, v in loaded.items():
         for transpose_name in transpose_names:
             if transpose_name in k:
                 print("transpose", k),
-                loaded[k] = permute_reverse(v)
+                loaded[k] = permute_reverse(v, config["num_attention_heads"], config["hidden_size"], config["hidden_size"])
 
     # fp16
     # loaded = {k: v.clone().half().contiguous() for k, v in loaded.items()}
@@ -54,5 +58,5 @@ def convert_file(pt_filename: str, sf_filename: str, transpose_names=[]):
 
 
 if __name__ == "__main__":
-    convert_file(args.input, args.output, transpose_names=["q_proj", "k_proj"])
+    convert_file(args.input, args.config, args.output, transpose_names=["q_proj", "k_proj"])
     print(f"Saved to {args.output}")

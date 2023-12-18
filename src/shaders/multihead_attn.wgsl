@@ -15,9 +15,9 @@ struct Params {
 @group(0) @binding(4) var<storage, read_write> attn: array<f32>;
 @group(0) @binding(5) var<storage, read_write> xb: array<f32>;
 
-const BLOCK_SIZE: u32 = 6u;
+const BLOCK_SIZE: u32 = 128u;
 
-@compute @workgroup_size(6, 1, 1)
+@compute @workgroup_size(128, 1, 1)
 fn multihead_attn(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let index = invocation_id.x;
     let token = invocation_id.y;
