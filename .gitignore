@@ -6,3 +6,4 @@ Cargo.lock
 /trace
 venv
 models/**
+.DS_Store

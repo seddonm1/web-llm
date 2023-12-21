@@ -5,14 +5,12 @@
 
 const BLOCK_SIZE: u32 = 128u;
 
-var<workgroup> sum: array<vec4<f32>, BLOCK_SIZE>;
 var<workgroup> sum_squared: array<vec4<f32>, BLOCK_SIZE>;
 var<workgroup> mss: f32;
 var<workgroup> rsqrt: f32;
 
 fn reduce_step(index: u32, stride: u32) {
     if index < stride {
-        sum[index] += sum[index + stride];
         sum_squared[index] += sum_squared[index + stride];
     }
     workgroupBarrier();
@@ -29,7 +27,6 @@ fn rms_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     for (var i = index; i < stride; i += BLOCK_SIZE) {
         let value = x[bb + i];
-        sum[index] += value;
         sum_squared[index] += value * value;
     }
     workgroupBarrier();

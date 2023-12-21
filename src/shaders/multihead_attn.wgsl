@@ -9,8 +9,8 @@ struct Params {
 
 @group(0) @binding(0) var<uniform> params: Params;
 
-@group(0) @binding(1) var<storage, read> q: array<f32>;
-@group(0) @binding(2) var<storage, read> key_cache: array<f32>;
+@group(0) @binding(1) var<storage, read> q: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read> key_cache: array<vec4<f32>>;
 @group(0) @binding(3) var<storage, read> value_cache: array<f32>;
 @group(0) @binding(4) var<storage, read_write> attn: array<f32>;
 @group(0) @binding(5) var<storage, read_write> xb: array<f32>;
@@ -34,12 +34,12 @@ fn multihead_attn(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         var max_val = 0.0;
         for (var t = 0u; t <= params.pos; t++) {
             // get the key vector for this head and at this pos
-            let k_offset = t * params.kv_dim + (head_index / params.kv_mul) * params.head_size;
+            let k_offset = (t * params.kv_dim + (head_index / params.kv_mul) * params.head_size) / 4u;
 
             var score = 0.0;
-            for (var i = 0u; i < params.head_size; i++) {
+            for (var i = 0u; i < params.head_size / 4u; i++) {
                 // calculate the attention score as the dot product of q and k
-                score += q[head_size_offset + i] * key_cache[k_offset + i];
+                score += dot(q[head_size_offset / 4u + i], key_cache[k_offset + i]);
             }
 
             // save the score to the attention buffer

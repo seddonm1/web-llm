@@ -6,7 +6,7 @@ use rust_tokenizers::{
     vocab::Vocab,
 };
 use std::{fs::File, io::Write, time::Instant};
-use web_rwkv::{
+use web_llm::{
     context::{Context, ContextBuilder, Instance},
     model::{
         llama::{self, ModelConfig},
