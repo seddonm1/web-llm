@@ -2,14 +2,13 @@ use anyhow::Result;
 use derive_getters::Getters;
 use half::f16;
 use safetensors::SafeTensors;
-use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
+use wgpu::CommandEncoderDescriptor;
 
 use super::{Lora, ModelError, ModelInfo, ModelVersion};
 use crate::{
     context::Context,
     num,
     tensor::{
-        ops::{TensorOp, TensorPass},
         shape::{Shape, TensorDimension},
         ReadWrite, TensorCpu, TensorError, TensorGpu, TensorInit, TensorReshape, TensorShape,
     },
@@ -216,72 +215,10 @@ impl<'a> Loader<'a> {
             .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
             .into();
 
-        let mut encoder = self
+        let encoder = self
             .context
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
-
-        for lora in self.lora_vectors(name) {
-            let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
-            let factor = TensorGpu::from_data(&self.context, Shape::new(4, 1, 1, 1), &factor)?;
-            let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-            pass.execute_tensor_op(&op);
-        }
-
-        self.context.queue.submit(Some(encoder.finish()));
-        Ok(tensor)
-    }
-
-    pub fn load_vector_exp_f32(&self, name: impl AsRef<str>) -> Result<TensorGpu<f32, ReadWrite>> {
-        use TensorDimension::{Auto, Dimension};
-        let tensor = self.model.tensor(name.as_ref())?;
-        let tensor = TensorCpu::<f16>::from_safetensors(&self.context, tensor)?
-            .map(|x| -x.to_f32().exp())
-            .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
-            .into();
-
-        let mut encoder = self
-            .context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
-
-        for lora in self.lora_vectors(name) {
-            let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
-            let factor = TensorGpu::from_data(&self.context, Shape::new(4, 1, 1, 1), &factor)?;
-            let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-            pass.execute_tensor_op(&op);
-        }
-
-        self.context.queue.submit(Some(encoder.finish()));
-        Ok(tensor)
-    }
-
-    pub fn load_vector_exp_exp_f32(
-        &self,
-        name: impl AsRef<str>,
-    ) -> Result<TensorGpu<f32, ReadWrite>> {
-        use TensorDimension::{Auto, Dimension};
-        let tensor = self.model.tensor(name.as_ref())?;
-        let tensor = TensorCpu::<f16>::from_safetensors(&self.context, tensor)?
-            .map(|x| -x.to_f32().exp())
-            .map(|x| x.exp())
-            .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
-            .into();
-
-        let mut encoder = self
-            .context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
-
-        for lora in self.lora_vectors(name) {
-            let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
-            let factor = TensorGpu::from_data(&self.context, Shape::new(4, 1, 1, 1), &factor)?;
-            let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-            pass.execute_tensor_op(&op);
-        }
 
         self.context.queue.submit(Some(encoder.finish()));
         Ok(tensor)
@@ -311,115 +248,6 @@ impl<'a> Loader<'a> {
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor = TensorGpu::from_safetensors(context, tensor)?;
         Ok(tensor)
-    }
-
-    pub fn load_matrix_f16_discount(
-        &self,
-        name: impl AsRef<str>,
-        discount: f32,
-    ) -> Result<TensorGpu<f16, ReadWrite>> {
-        let context = &self.context;
-
-        let lora = self.lora_matrices(name.as_ref());
-        let tensor = self.model.tensor(name.as_ref())?;
-
-        let tensor = TensorCpu::<f16>::from_safetensors(context, tensor)?
-            .map(|x| f16::from_f32(discount * x.to_f32()));
-        let tensor = TensorGpu::from(tensor);
-
-        if !lora.is_empty() {
-            let mut encoder = context
-                .device
-                .create_command_encoder(&CommandEncoderDescriptor::default());
-            for lora in lora {
-                let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
-                let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
-                let op = TensorOp::blend_lora(
-                    &factor,
-                    lora.b.view(.., .., .., ..)?,
-                    lora.a.view(.., .., .., ..)?,
-                    tensor.view(.., .., .., ..)?,
-                )?;
-                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-                pass.execute_tensor_op(&op);
-            }
-            context.queue.submit(Some(encoder.finish()));
-        };
-
-        Ok(tensor)
-    }
-
-    pub fn load_in_place_matrix_f16(
-        &self,
-        matrix: &TensorGpu<f16, ReadWrite>,
-        name: impl AsRef<str>,
-    ) -> Result<()> {
-        let context = &self.context;
-        let lora = self.lora_matrices(name.as_ref());
-        let tensor = self.model.tensor(name.as_ref())?;
-
-        let tensor = TensorCpu::from_safetensors(context, tensor)?;
-        matrix.load(&tensor)?;
-
-        if !lora.is_empty() {
-            let mut encoder = context
-                .device
-                .create_command_encoder(&CommandEncoderDescriptor::default());
-            for lora in lora {
-                let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
-                let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
-                let op = TensorOp::blend_lora(
-                    &factor,
-                    lora.b.view(.., .., .., ..)?,
-                    lora.a.view(.., .., .., ..)?,
-                    matrix.view(.., .., .., ..)?,
-                )?;
-                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-                pass.execute_tensor_op(&op);
-            }
-            context.queue.submit(Some(encoder.finish()));
-        }
-
-        Ok(())
-    }
-
-    pub fn load_in_place_matrix_f16_discount(
-        &self,
-        matrix: &TensorGpu<f16, ReadWrite>,
-        name: impl AsRef<str>,
-        discount: f32,
-    ) -> Result<()> {
-        use TensorDimension::{Dimension, Full};
-        let context = &self.context;
-
-        let lora = self.lora_matrices(name.as_ref());
-        let tensor = self.model.tensor(name.as_ref())?;
-
-        let tensor = TensorCpu::<f16>::from_safetensors(context, tensor)?
-            .map(|x| f16::from_f32(discount * x.to_f32()))
-            .reshape(Full, Full, Dimension(1), Dimension(1))?;
-        matrix.load(&tensor)?;
-
-        if !lora.is_empty() {
-            let mut encoder = context
-                .device
-                .create_command_encoder(&CommandEncoderDescriptor::default());
-            for lora in lora {
-                let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
-                let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
-                let op = TensorOp::blend_lora(
-                    &factor,
-                    lora.b.view(.., .., .., ..)?,
-                    lora.a.view(.., .., .., ..)?,
-                    matrix.view(.., .., .., ..)?,
-                )?;
-                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-                pass.execute_tensor_op(&op);
-            }
-            context.queue.submit(Some(encoder.finish()));
-        }
-
-        Ok(())
     }
 
     pub fn load_embed<'b>(&self) -> Result<TensorCpu<'b, f16>> {

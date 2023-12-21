@@ -103,6 +103,7 @@ struct Runtime {
     value_cache: HashMap<usize, TensorGpu<f32, ReadWrite>>,
 
     half_x: TensorGpu<f16, ReadWrite>,
+    probe: TensorGpu<f32, ReadWrite>,
 }
 
 impl Runtime {
@@ -138,6 +139,7 @@ impl Runtime {
 
             // unused
             half_x: context.tensor_init(dim_shape),
+            probe: context.tensor_init(Shape::new(768, 1, 1, 1)),
         }
     }
 }
@@ -215,6 +217,19 @@ impl Model {
                             ..,
                         )?,
                     )?,
+                    // if layer_index == 0 {
+                    //     TensorOp::blit(
+                    //         buffer.key_cache[&layer_index].view(
+                    //             pos * dim..(pos + 1) * dim,
+                    //             ..,
+                    //             ..,
+                    //             ..,
+                    //         )?,
+                    //         buffer.probe.view(.., .., .., ..)?,
+                    //     )?
+                    // } else {
+                    //     TensorOp::NoOp
+                    // },
                     layer.attn.w_v.matmul_vec_op(
                         buffer.half_x.view(.., .., .., ..)?,
                         buffer.xb.view(.., .., .., ..)?,
@@ -336,10 +351,31 @@ impl Model {
         pass.execute_tensor_op(&ops);
         drop(pass);
 
+        // // debug get output
+        // let probe_map = context.tensor_init(buffer.probe.shape());
+        // encoder.copy_tensor(&buffer.probe, &probe_map)?;
+
         let argmax_map = context.tensor_init(buffer.argmax.shape());
         encoder.copy_tensor(&buffer.argmax, &argmax_map)?;
         context.queue.submit(Some(encoder.finish()));
         let argmax = Vec::from(argmax_map.back());
+
+        // debug get output
+        // let probe_host = probe_map.back();
+        // let probe_host = Vec::from(probe_host);
+        // println!(
+        //     "\n{:?}\n{}",
+        //     &buffer.probe.shape(),
+        //     &probe_host
+        //         .iter()
+        //         .map(|v| format!("{:.4}", v))
+        //         .collect::<Vec<_>>()
+        //         .join(" ")
+        //         .replace('"', "")
+        // );
+        // if pos == 16 {
+        //     panic!()
+        // }
 
         Ok(argmax[0] as i64)
     }

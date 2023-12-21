@@ -199,18 +199,6 @@ impl<'a> ContextBuilder<'a> {
 
     fn with_core_pipelines(self) -> Self {
         self.with_pipeline(
-            "layer_norm",
-            include_str!("shaders/layer_norm.wgsl"),
-            "layer_norm",
-            None,
-        )
-        .with_pipeline(
-            "group_norm",
-            include_str!("shaders/group_norm.wgsl"),
-            "group_norm",
-            None,
-        )
-        .with_pipeline(
             "matmul_vec_fp32",
             include_str!("shaders/matmul_vec_fp32.wgsl"),
             "matmul",
@@ -252,48 +240,6 @@ impl<'a> ContextBuilder<'a> {
             "matmul",
             None,
         )
-        .with_pipeline(
-            "token_shift",
-            include_str!("shaders/token_shift.wgsl"),
-            "token_shift",
-            None,
-        )
-        .with_pipeline(
-            "token_shift_rev",
-            include_str!("shaders/token_shift.wgsl"),
-            "token_shift_rev",
-            None,
-        )
-        .with_pipeline(
-            "token_shift_fp32",
-            include_str!("shaders/token_shift.wgsl"),
-            "token_shift_fp32",
-            None,
-        )
-        .with_pipeline(
-            "token_shift_rev_fp32",
-            include_str!("shaders/token_shift.wgsl"),
-            "token_shift_rev_fp32",
-            None,
-        )
-        .with_pipeline(
-            "time_mix",
-            include_str!("shaders/time_mix.wgsl"),
-            "time_mix",
-            None,
-        )
-        .with_pipeline(
-            "time_mix_v5",
-            include_str!("shaders/time_mix_v5.wgsl"),
-            "time_mix",
-            None,
-        )
-        .with_pipeline(
-            "time_mix_v6",
-            include_str!("shaders/time_mix_v6.wgsl"),
-            "time_mix",
-            None,
-        )
         .with_pipeline("add", include_str!("shaders/add.wgsl"), "add", None)
         .with_pipeline(
             "add_fp16",
@@ -302,30 +248,6 @@ impl<'a> ContextBuilder<'a> {
             None,
         )
         .with_pipeline("silu", include_str!("shaders/silu.wgsl"), "silu", None)
-        .with_pipeline(
-            "tanh",
-            include_str!("shaders/activation.wgsl"),
-            "activation_tanh",
-            None,
-        )
-        .with_pipeline(
-            "stable_exp",
-            include_str!("shaders/activation.wgsl"),
-            "stable_exp",
-            None,
-        )
-        .with_pipeline(
-            "squared_relu",
-            include_str!("shaders/activation.wgsl"),
-            "squared_relu",
-            None,
-        )
-        .with_pipeline(
-            "channel_mix",
-            include_str!("shaders/channel_mix.wgsl"),
-            "channel_mix",
-            None,
-        )
         .with_pipeline(
             "softmax",
             include_str!("shaders/softmax.wgsl"),
@@ -340,19 +262,6 @@ impl<'a> ContextBuilder<'a> {
                 "transpose",
                 include_str!("shaders/blit.wgsl"),
                 "transpose",
-                None,
-            )
-            .with_pipeline("blend", include_str!("shaders/blend.wgsl"), "blend", None)
-            .with_pipeline(
-                "blend_lora",
-                include_str!("shaders/blend_lora.wgsl"),
-                "blend_lora",
-                None,
-            )
-            .with_pipeline(
-                "half",
-                include_str!("shaders/discount.wgsl"),
-                "discount_half",
                 None,
             )
             .with_pipeline(
