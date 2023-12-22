@@ -40,10 +40,12 @@ def convert_file(pt_filename: str, config_filename: str, sf_filename: str, trans
                 print("transpose", k),
                 loaded[k] = permute_reverse(v, config["num_attention_heads"], config["hidden_size"], config["hidden_size"])
 
-    # fp16
-    # loaded = {k: v.clone().half().contiguous() for k, v in loaded.items()}
-    # fp32
-    loaded = {k: v.clone().contiguous() for k, v in loaded.items()}
+    if "f16" in sf_filename:
+        # fp16
+        loaded = {k: v.clone().half().contiguous() for k, v in loaded.items()}
+    else:
+        # fp32
+        loaded = {k: v.clone().contiguous() for k, v in loaded.items()}
 
     for k, v in loaded.items():
         print(f"{k}\t{v.shape}\t{v.dtype}")

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use half::f16;
 use memmap2::Mmap;
 use rust_tokenizers::{
     tokenizer::{SentencePieceBpeTokenizer, Tokenizer, TruncationStrategy},
@@ -31,7 +32,8 @@ async fn run(args: Args) -> Result<()> {
     let file = File::open(&args.path)?;
     let data = unsafe { Mmap::map(&file)? };
 
-    let config = match args.path.to_string_lossy().to_string() {
+    let path_string = args.path.to_string_lossy().to_string();
+    let config = match path_string {
         // stories-15M
         p if p.contains("15M") => ModelConfig {
             dim: 288,
@@ -66,7 +68,19 @@ async fn run(args: Args) -> Result<()> {
     };
 
     let tokenizer = LlamaTokenizer::new("tokenizer.model").unwrap();
-    let model = ModelBuilder::new(&context, &config, &data).build::<llama::Model>()?;
+    let model: Box<dyn Model<ModelState = llama::ModelState>> =
+        match args.path.to_string_lossy().to_string() {
+            p if p.contains("f16") => Box::new(
+                ModelBuilder::new(&context, &config, &data)
+                    .build::<llama::TypedModel<f16, f32>>()?,
+            ),
+            p if p.contains("f32") => Box::new(
+                ModelBuilder::new(&context, &config, &data)
+                    .build::<llama::TypedModel<f32, f32>>()?,
+            ),
+            _ => unimplemented!(),
+        };
+
     let mut state = StateBuilder::new(&context).build::<llama::ModelState>();
     println!("Model loaded");
 

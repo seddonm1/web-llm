@@ -17,7 +17,8 @@ python3 export.py --version -1 --dtype fp32 --checkpoint stories15M.pt models/st
 2. Convert the huggingface `pytorch_model.bin` to `safetensors`:
 
 ```bash
-python3 convert_safetensors.py --input models/stories15M/pytorch_model.bin --config models/stories15M/config.json --output models/stories15M/model.safetensors
+python3 convert_safetensors.py --input models/stories15M/pytorch_model.bin --config models/stories15M/config.json --output models/stories15M/model.f16.safetensors
+python3 convert_safetensors.py --input models/stories15M/pytorch_model.bin --config models/stories15M/config.json --output models/stories15M/model.f32.safetensors
 ```
 
 3. Run the model:

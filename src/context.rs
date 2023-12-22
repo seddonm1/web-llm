@@ -271,8 +271,8 @@ impl<'a> ContextBuilder<'a> {
                 None,
             )
             .with_pipeline(
-                "multihead_attn",
-                include_str!("shaders/multihead_attn.wgsl"),
+                "multihead_attn_fp32",
+                include_str!("shaders/multihead_attn_f32.wgsl"),
                 "multihead_attn",
                 None,
             )

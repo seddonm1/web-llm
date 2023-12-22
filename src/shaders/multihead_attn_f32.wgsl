@@ -27,19 +27,19 @@ fn multihead_attn(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     for (var head_index = index; head_index < params.n_heads; head_index += BLOCK_SIZE) {
         let head_offset = head_index * params.seq_len;
-        let head_size_offset = head_index * params.head_size;
+        let head_size_offset = head_index * params.head_size / 4u;
 
         // iterate over all pos, including the current one
         // also calculate the max value (for numerical stability) for the softmax step
         var max_val = 0.0;
         for (var t = 0u; t <= params.pos; t++) {
             // get the key vector for this head and at this pos
-            let k_offset = t * params.kv_dim + (head_index / params.kv_mul) * params.head_size;
+            let k_offset = (t * params.kv_dim + (head_index / params.kv_mul) * params.head_size) / 4u;
 
             var score = 0.0;
             for (var i = 0u; i < params.head_size / 4u; i++) {
                 // calculate the attention score as the dot product of q and k
-                score += dot(q[head_size_offset / 4u + i], key_cache[k_offset / 4u + i]);
+                score += dot(q[head_size_offset + i], key_cache[k_offset + i]);
             }
             score = score / head_size_sqrt;
 
@@ -65,16 +65,16 @@ fn multihead_attn(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
         // weighted sum of the values, store back into xb
         for (var i = 0u; i < params.head_size / 4u; i++) {
-            xb[head_size_offset / 4u + i] = vec4<f32>(0.0);
+            xb[head_size_offset + i] = vec4<f32>(0.0);
         }
         for (var t = 0u; t <= params.pos; t++) {
             // get the key vector for this head and at this pos
-            let v_offset = t * params.kv_dim + (head_index / params.kv_mul) * params.head_size;
+            let v_offset = (t * params.kv_dim + (head_index / params.kv_mul) * params.head_size) / 4u;
             // get the attention weight for this timestep
             let att = vec4<f32>(attn[head_offset + t]);
             // accumulate the weighted value into xb
             for (var i = 0u; i < params.head_size / 4u; i++) {
-                xb[head_size_offset / 4u + i] += att * value_cache[v_offset / 4u + i];
+                xb[head_size_offset + i] += att * value_cache[v_offset + i];
             }
         }
     }

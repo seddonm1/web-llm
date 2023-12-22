@@ -10,10 +10,10 @@ use serde_json::de::Read;
 use web_rwkv_derive::{Deref, DerefMut};
 use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
-use super::{loader::Loader, matrix::Matrix, FromBuilder, ModelBuilder, ModelInfo, StateBuilder};
+use super::{loader::Loader, FromBuilder, ModelBuilder, ModelInfo, StateBuilder};
 use crate::{
     context::Context,
-    num::Scalar,
+    num::{self, Scalar},
     tensor::{
         cache::ResourceCache,
         ops::{TensorCommand, TensorOp, TensorPass},
@@ -23,12 +23,16 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct Model {
+pub struct TypedModel<T, C>
+where
+    T: num::Scalar + std::marker::Sync,
+    C: num::Scalar + std::marker::Sync,
+{
     context: Context,
     config: ModelConfig,
-    tensor: ModelTensor,
+    tensor: ModelTensor<T>,
 
-    runtime_cache: ResourceCache<usize, Runtime>,
+    runtime_cache: ResourceCache<usize, Runtime<C>>,
 }
 
 #[derive(Clone, Debug)]
@@ -43,70 +47,88 @@ pub struct ModelConfig {
 }
 
 #[derive(Debug)]
-struct ModelTensor {
-    token_embedding: Matrix,
-    layers: Vec<ResidualDecoderAttentionBlock>,
-    rms_final_weight: RMSNorm,
-    classifier: Matrix,
+struct ModelTensor<T>
+where
+    T: num::Scalar + std::marker::Sync,
+{
+    token_embedding: TensorGpu<T, ReadWrite>,
+    layers: Vec<ResidualDecoderAttentionBlock<T>>,
+    rms_final_weight: RMSNorm<T>,
+    classifier: TensorGpu<T, ReadWrite>,
 }
 
 #[derive(Debug)]
-pub struct ResidualDecoderAttentionBlock {
-    attn: MultiHeadSelfAttention,
-    ffn: FeedForwardNetwork,
-    att_norm: RMSNorm,
-    ffn_norm: RMSNorm,
+pub struct ResidualDecoderAttentionBlock<T>
+where
+    T: num::Scalar,
+{
+    attn: MultiHeadSelfAttention<T>,
+    ffn: FeedForwardNetwork<T>,
+    att_norm: RMSNorm<T>,
+    ffn_norm: RMSNorm<T>,
 }
 
 #[derive(Debug)]
-struct MultiHeadSelfAttention {
-    w_q: Matrix,
-    w_k: Matrix,
-    w_v: Matrix,
-    w_o: Matrix,
+struct MultiHeadSelfAttention<T>
+where
+    T: num::Scalar,
+{
+    w_q: TensorGpu<T, ReadWrite>,
+    w_k: TensorGpu<T, ReadWrite>,
+    w_v: TensorGpu<T, ReadWrite>,
+    w_o: TensorGpu<T, ReadWrite>,
 }
 
 #[derive(Debug)]
-pub struct FeedForwardNetwork {
+pub struct FeedForwardNetwork<T>
+where
+    T: num::Scalar,
+{
     // w1
-    gate: Matrix,
+    gate: TensorGpu<T, ReadWrite>,
     // w2
-    down: Matrix,
+    down: TensorGpu<T, ReadWrite>,
     // w3
-    up: Matrix,
+    up: TensorGpu<T, ReadWrite>,
 }
 
 #[derive(Debug)]
 
-struct RMSNorm {
-    w: TensorGpu<f32, ReadWrite>,
+struct RMSNorm<T>
+where
+    T: num::Scalar,
+{
+    w: TensorGpu<T, ReadWrite>,
 }
 
 /// Runtime buffers.
 #[derive(Debug)]
-struct Runtime {
-    x: TensorGpu<f32, ReadWrite>,
-    xb: TensorGpu<f32, ReadWrite>,
-    xb2: TensorGpu<f32, ReadWrite>,
+struct Runtime<C>
+where
+    C: num::Scalar + std::marker::Sync,
+{
+    x: TensorGpu<C, ReadWrite>,
+    xb: TensorGpu<C, ReadWrite>,
+    xb2: TensorGpu<C, ReadWrite>,
 
-    attn: TensorGpu<f32, ReadWrite>,
-    attn_q: TensorGpu<f32, ReadWrite>,
+    attn: TensorGpu<C, ReadWrite>,
+    attn_q: TensorGpu<C, ReadWrite>,
 
-    ffn_gate: TensorGpu<f32, ReadWrite>,
-    ffn_silu: TensorGpu<f32, ReadWrite>,
-    ffn_up: TensorGpu<f32, ReadWrite>,
+    ffn_gate: TensorGpu<C, ReadWrite>,
+    ffn_silu: TensorGpu<C, ReadWrite>,
+    ffn_up: TensorGpu<C, ReadWrite>,
 
-    logits: TensorGpu<f32, ReadWrite>,
+    logits: TensorGpu<C, ReadWrite>,
     argmax: TensorGpu<u32, ReadWrite>,
 
-    key_cache: HashMap<usize, TensorGpu<f32, ReadWrite>>,
-    value_cache: HashMap<usize, TensorGpu<f32, ReadWrite>>,
-
-    half_x: TensorGpu<f16, ReadWrite>,
-    probe: TensorGpu<f32, ReadWrite>,
+    key_cache: HashMap<usize, TensorGpu<C, ReadWrite>>,
+    value_cache: HashMap<usize, TensorGpu<C, ReadWrite>>,
 }
 
-impl Runtime {
+impl<C> Runtime<C>
+where
+    C: num::Scalar + std::marker::Sync,
+{
     pub fn new(context: &Context, config: &ModelConfig) -> Self {
         let dim_shape = Shape::new(config.dim, 1, 1, 1);
         let hidden_shape = Shape::new(config.hidden_dim, 1, 1, 1);
@@ -136,17 +158,17 @@ impl Runtime {
             value_cache: (0..config.n_layers)
                 .map(|layer_index| (layer_index, context.tensor_init(cache_shape)))
                 .collect(),
-
-            // unused
-            half_x: context.tensor_init(dim_shape),
-            probe: context.tensor_init(Shape::new(768, 1, 1, 1)),
         }
     }
 }
 
-impl Model {
+impl<T, C> TypedModel<T, C>
+where
+    T: num::Scalar + std::marker::Sync,
+    C: num::Scalar + std::marker::Sync,
+{
     #[inline]
-    fn request_runtime(&self, num_token: usize) -> Arc<Runtime> {
+    fn request_runtime(&self, num_token: usize) -> Arc<Runtime<C>> {
         self.runtime_cache
             .request(num_token, || Runtime::new(&self.context, &self.config))
     }
@@ -175,17 +197,10 @@ impl Model {
 
         // copy the token embedding for the token to the input buffer
         ops.extend(
-            [match &tensor.token_embedding {
-                Matrix::Fp32(tensor) => TensorOp::blit(
-                    tensor.view(.., token..=token, .., ..)?,
-                    buffer.x.view(.., .., .., ..)?,
-                )?,
-                Matrix::Fp16(tensor) => TensorOp::blit(
-                    tensor.view(.., token..=token, .., ..)?,
-                    buffer.x.view(.., .., .., ..)?,
-                )?,
-                _ => unimplemented!(),
-            }]
+            [TensorOp::blit(
+                tensor.token_embedding.view(.., token..=token, .., ..)?,
+                buffer.x.view(.., .., .., ..)?,
+            )?]
             .into_iter(),
         );
 
@@ -201,14 +216,14 @@ impl Model {
                     // attention rmsnorm
                     TensorOp::rms_norm(&layer.att_norm.w, &buffer.xb)?,
                     // qkv matmuls for this position
-                    layer.attn.w_q.matmul_vec_op(
-                        buffer.half_x.view(.., .., .., ..)?,
+                    TensorOp::matmul_vec(
+                        &layer.attn.w_q,
                         buffer.xb.view(.., .., .., ..)?,
                         buffer.attn_q.view(.., .., .., ..)?,
                     )?,
                     // key and value point to the kv cache
-                    layer.attn.w_k.matmul_vec_op(
-                        buffer.half_x.view(.., .., .., ..)?,
+                    TensorOp::matmul_vec(
+                        &layer.attn.w_k,
                         buffer.xb.view(.., .., .., ..)?,
                         buffer.key_cache[&layer_index].view(
                             pos * dim..(pos + 1) * dim,
@@ -230,8 +245,8 @@ impl Model {
                     // } else {
                     //     TensorOp::NoOp
                     // },
-                    layer.attn.w_v.matmul_vec_op(
-                        buffer.half_x.view(.., .., .., ..)?,
+                    TensorOp::matmul_vec(
+                        &layer.attn.w_v,
                         buffer.xb.view(.., .., .., ..)?,
                         buffer.value_cache[&layer_index].view(
                             pos * kv_dim..(pos + 1) * kv_dim,
@@ -279,8 +294,8 @@ impl Model {
                         pos,
                     )?,
                     // final matmul to get the output of the attention
-                    layer.attn.w_o.matmul_vec_op(
-                        buffer.half_x.view(.., .., .., ..)?,
+                    TensorOp::matmul_vec(
+                        &layer.attn.w_o,
                         buffer.xb.view(.., .., .., ..)?,
                         buffer.xb2.view(.., .., .., ..)?,
                     )?,
@@ -301,20 +316,20 @@ impl Model {
                         buffer.xb.view(.., .., .., ..)?,
                     )?,
                     TensorOp::rms_norm(&layer.ffn_norm.w, &buffer.xb)?,
-                    layer.ffn.gate.matmul_vec_op(
-                        buffer.half_x.view(.., .., .., ..)?,
+                    TensorOp::matmul_vec(
+                        &layer.ffn.gate,
                         buffer.xb.view(.., .., .., ..)?,
                         buffer.ffn_gate.view(.., .., .., ..)?,
                     )?,
                     TensorOp::silu(&buffer.ffn_gate, &buffer.ffn_silu)?,
-                    layer.ffn.up.matmul_vec_op(
-                        buffer.half_x.view(.., .., .., ..)?,
+                    TensorOp::matmul_vec(
+                        &layer.ffn.up,
                         buffer.xb.view(.., .., .., ..)?,
                         buffer.ffn_up.view(.., .., .., ..)?,
                     )?,
                     TensorOp::elementwise(&buffer.ffn_silu, &buffer.ffn_up)?,
-                    layer.ffn.down.matmul_vec_op(
-                        buffer.half_x.view(.., .., .., ..)?,
+                    TensorOp::matmul_vec(
+                        &layer.ffn.down,
                         buffer.ffn_up.view(.., .., .., ..)?,
                         buffer.xb.view(.., .., .., ..)?,
                     )?,
@@ -333,8 +348,8 @@ impl Model {
                 // final rmsnorm
                 TensorOp::rms_norm(&tensor.rms_final_weight.w, &buffer.x)?,
                 // classifier into logits
-                tensor.classifier.matmul_vec_op(
-                    buffer.half_x.view(.., .., .., ..)?,
+                TensorOp::matmul_vec(
+                    &tensor.classifier,
                     buffer.x.view(.., .., .., ..)?,
                     buffer.logits.view(.., .., .., ..)?,
                 )?,
@@ -420,7 +435,11 @@ impl FromBuilder for ModelState {
     }
 }
 
-impl FromBuilder for Model {
+impl<T, C> FromBuilder for TypedModel<T, C>
+where
+    T: num::Scalar + std::marker::Sync,
+    C: num::Scalar + std::marker::Sync,
+{
     type Builder<'b> = ModelBuilder<'b>;
     type Error = anyhow::Error;
 
@@ -434,67 +453,56 @@ impl FromBuilder for Model {
 
         let loader = Loader::new(&context, data, vec![])?;
 
-        let layers =
-            (0..config.n_layers)
-                .map(|layer_idx| {
-                    let attn = MultiHeadSelfAttention {
-                        w_q: Matrix::Fp32(loader.load_matrix(format!(
-                            "model.layers.{layer_idx}.self_attn.q_proj.weight"
-                        ))?),
-                        w_k: Matrix::Fp32(loader.load_matrix(format!(
-                            "model.layers.{layer_idx}.self_attn.k_proj.weight"
-                        ))?),
-                        w_v: Matrix::Fp32(loader.load_matrix(format!(
-                            "model.layers.{layer_idx}.self_attn.v_proj.weight"
-                        ))?),
-                        w_o: Matrix::Fp32(loader.load_matrix(format!(
-                            "model.layers.{layer_idx}.self_attn.o_proj.weight"
-                        ))?),
-                    };
+        let layers = (0..config.n_layers)
+            .map(|layer_idx| {
+                let attn = MultiHeadSelfAttention {
+                    w_q: loader
+                        .load_matrix(format!("model.layers.{layer_idx}.self_attn.q_proj.weight"))?,
+                    w_k: loader
+                        .load_matrix(format!("model.layers.{layer_idx}.self_attn.k_proj.weight"))?,
+                    w_v: loader
+                        .load_matrix(format!("model.layers.{layer_idx}.self_attn.v_proj.weight"))?,
+                    w_o: loader
+                        .load_matrix(format!("model.layers.{layer_idx}.self_attn.o_proj.weight"))?,
+                };
 
-                    let ffn =
-                        FeedForwardNetwork {
-                            gate: Matrix::Fp32(loader.load_matrix(format!(
-                                "model.layers.{layer_idx}.mlp.gate_proj.weight"
-                            ))?),
-                            down: Matrix::Fp32(loader.load_matrix(format!(
-                                "model.layers.{layer_idx}.mlp.down_proj.weight"
-                            ))?),
-                            up: Matrix::Fp32(loader.load_matrix(format!(
-                                "model.layers.{layer_idx}.mlp.up_proj.weight"
-                            ))?),
-                        };
+                let ffn = FeedForwardNetwork {
+                    gate: loader
+                        .load_matrix(format!("model.layers.{layer_idx}.mlp.gate_proj.weight"))?,
+                    down: loader
+                        .load_matrix(format!("model.layers.{layer_idx}.mlp.down_proj.weight"))?,
+                    up: loader
+                        .load_matrix(format!("model.layers.{layer_idx}.mlp.up_proj.weight"))?,
+                };
 
-                    // init LayerNorm with 0.0 bias
-                    let w = loader.load_vector::<f32>(format!(
-                        "model.layers.{layer_idx}.input_layernorm.weight"
-                    ))?;
-                    let att_norm = RMSNorm { w };
+                // init LayerNorm with 0.0 bias
+                let w = loader
+                    .load_vector::<T>(format!("model.layers.{layer_idx}.input_layernorm.weight"))?;
+                let att_norm = RMSNorm { w };
 
-                    // init LayerNorm with 0.0 bias
-                    let w = loader.load_vector::<f32>(format!(
-                        "model.layers.{layer_idx}.post_attention_layernorm.weight"
-                    ))?;
-                    let ffn_norm = RMSNorm { w };
+                // init LayerNorm with 0.0 bias
+                let w = loader.load_vector::<T>(format!(
+                    "model.layers.{layer_idx}.post_attention_layernorm.weight"
+                ))?;
+                let ffn_norm = RMSNorm { w };
 
-                    let block = ResidualDecoderAttentionBlock {
-                        attn,
-                        ffn,
-                        att_norm,
-                        ffn_norm,
-                    };
+                let block = ResidualDecoderAttentionBlock {
+                    attn,
+                    ffn,
+                    att_norm,
+                    ffn_norm,
+                };
 
-                    context.queue.submit(None);
-                    context.device.poll(wgpu::MaintainBase::Wait);
+                context.queue.submit(None);
+                context.device.poll(wgpu::MaintainBase::Wait);
 
-                    Ok(block)
-                })
-                .collect::<Result<Vec<_>>>()?;
+                Ok(block)
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        let token_embedding =
-            Matrix::Fp32(loader.load_matrix(format!("model.embed_tokens.weight"))?);
-        let output_norm_w = loader.load_vector::<f32>(format!("model.norm.weight"))?;
-        let classifier = Matrix::Fp32(loader.load_matrix(format!("lm_head.weight"))?);
+        let token_embedding = loader.load_matrix(format!("model.embed_tokens.weight"))?;
+        let output_norm_w = loader.load_vector::<T>(format!("model.norm.weight"))?;
+        let classifier = loader.load_matrix(format!("lm_head.weight"))?;
 
         context.queue.submit(None);
         context.device.poll(wgpu::MaintainBase::Wait);
@@ -516,7 +524,11 @@ impl FromBuilder for Model {
 }
 
 #[async_trait]
-impl super::Model for Model {
+impl<T, C> super::Model for TypedModel<T, C>
+where
+    T: num::Scalar + std::marker::Sync,
+    C: num::Scalar + std::marker::Send + std::marker::Sync,
+{
     type ModelState = ModelState;
 
     #[inline]

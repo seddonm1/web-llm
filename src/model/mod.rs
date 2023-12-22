@@ -13,7 +13,6 @@ use self::llama::ModelConfig;
 
 pub mod llama;
 pub mod loader;
-pub mod matrix;
 
 pub const RESCALE_LAYER: usize = 6;
 
